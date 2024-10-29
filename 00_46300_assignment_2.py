@@ -60,7 +60,7 @@ mpl.rcParams['savefig.bbox'] = "tight"
 #%% Class definition
 class WindFarmCalculator:
     def __init__(self, p=160, V_rtd=10, rpm_Rrtd=10, V_out = 25,
-                 P_rtd=10e6, Psi=19.5, f_s=50, a=33/4,
+                 P_rtd=10e6, Psi=19.5, f_s=50, a=33/4, V_grid = 33e3/np.sqrt(3),
                  exp_fld = "./00_export/"):
         # Assignment specifications
         self.p = p                            #[-] - Number of pole pairs
@@ -72,6 +72,7 @@ class WindFarmCalculator:
         self.Psi = Psi                        #[Wb] - Rotor flux linkage
         self.omega = 2*np.pi*f_s              #[rad/s] - Rotational speed of the system-side circuit
         self.a = a                            #[-] - Turns ratio of the Transformer
+        self.V_grid = V_grid                  #[V] - Phase voltage of the grid
         
         # Preparatory calculations
         self.Z_t1_p = a**2 * complex(25e-3, self.omega*10e-6)
@@ -86,15 +87,20 @@ class WindFarmCalculator:
         self.A_1 = (1+(self.Z_t2+self.Z_c1)/self.Z_t3_p)
         self.B_1 = self.Z_t1_p+(self.Z_t2+self.Z_c1)*(self.Z_t1_p/self.Z_t3_p+1)
         
-        self.A_i = (1/self.Z_c2)*(1+(self.Z_t2+self.Z_c1)/self.Z_t3_p) \
-                    + 1/self.Z_t3_p
+        self.A_i = 1/self.Z_c2 +  1/self.Z_t3_p \
+                   + (self.Z_t2+self.Z_c1)/(self.Z_c2*self.Z_t3_p)
         self.B_i = 1 + (self.Z_t2+self.Z_c1)/self.Z_t3_p
         
-        self.A_v = (self.Z_t1_p/self.Z_c2)*(1+(self.Z_t2+self.Z_c1)/self.Z_t3_p)\
-                   + self.Z_t1_p/self.Z_t3_p \
-                   + 1 + (self.Z_t2+self.Z_c1)/self.Z_t3_p
-        self.B_v = self.Z_t1_p*(1+(self.Z_t2+self.Z_c1)/self.Z_t3_p) \
+        self.A_v = self.Z_t1_p*(1/self.Z_c2 + 1/self.Z_t3_p 
+                                + (self.Z_t2+self.Z_c1)/(self.Z_c2*self.Z_t3_p))\
+                   + 1 + (self.Z_t2+self.Z_c1)/self.Z_c2
+        self.B_v = self.Z_t1_p*(1 + (self.Z_t2+self.Z_c1)/self.Z_t3_p) \
                    + self.Z_t2 + self.Z_c1
+                   
+        self.k1 = self.B_v*self.B_i.conjugate()
+        self.k2 = self.V_grid*(self.A_v*self.B_i.conjugate() 
+                               + self.A_i.conjugate()*self.B_v)
+        self.k3 = self.V_grid**2*self.A_v*self.A_i.conjugate()
         
         #Misc
         self.exp_fld = exp_fld
@@ -264,7 +270,7 @@ class WindFarmCalculator:
                 voltage side) [V]    
         """
         
-        V_poc = 33e3/np.sqrt(3)
+        V_poc = self.V_grid
         I_c2 = V_poc/self.Z_c2
         I_t2 = I_c2 + I_poc
         I_t3_p = (I_t2*(self.Z_t2+self.Z_c1) + I_c2*self.Z_c2)/self.Z_t3_p
@@ -306,7 +312,7 @@ class WindFarmCalculator:
         V_poc_intsct = np.zeros(len(P_vscg))
         for i in range(len(P_vscg)):
             V_intersect = intersection(V_vscs_p_range, V_poc[i,:],
-                                  [0,50e3], [33e3/np.sqrt(3), 33e3/np.sqrt(3)])
+                                  [0,50e3], [self.V_grid, self.V_grid])
             
             V_vscs_p[i] = V_intersect[0][-1]
             V_poc_intsct[i] = V_intersect[1][-1]
@@ -331,27 +337,41 @@ class WindFarmCalculator:
                 Active power of the system-side VSC, at which the solution was 
                 found [W]
         """
-        I_poc_range = np.linspace(-100,500, 500)
-        V_poc = 33e3/np.sqrt(3)
+        I_poc_range = np.linspace(-100,300, 10000)
+        V_poc = self.V_grid
         
         S_vscs = 3*(V_poc*self.A_v + I_poc_range*self.B_v)\
                   *(V_poc*self.A_i.conjugate() 
                     + I_poc_range*self.B_i.conjugate())
-
+        
+        # V_vscs_p, I_t1_p, S_vscs, V_sec = self.calc_system_circuit_t2(I_poc_range)
+        
         I_poc = np.zeros(len(P_vscg))
-        P_poc_intsct = np.zeros(len(P_vscg))
+        P_vscs_intsct = np.zeros(len(P_vscg))
         for i,P_i in enumerate(P_vscg):
             I_intersect = intersection(I_poc_range, S_vscs.real,
-                                       [0,300], [P_i, P_i])
+                                       [-500,500], [P_i, P_i])
             
             try:
                 I_poc[i] = I_intersect[0][-1]
-                P_poc_intsct[i] = I_intersect[1][-1]
+                P_vscs_intsct[i] = I_intersect[1][-1]
             except:
                 pass
             
-        return I_poc, P_poc_intsct 
-
+        return I_poc, P_vscs_intsct 
+    
+    def solve_I_poc_2 (self, P_vscg):
+        a = self.k1.real
+        b = self.k2.real
+        c = self.k3.real-P_vscg/3
+        
+        I_poc = (-b + np.sqrt(b**2 - 4*a*c))/(2*a)
+        
+        #Second solution (returns unrealistic values)
+        #I_poc_2 = (-b - np.sqrt(b**2 - 4*a*c))/(2*a)
+        
+        return I_poc
+    
     def calc_efficiency (self, V_0, cont_type="a", plt_res = False):  
         """Calculates the efficiency of the electronic system from the 
         generator to the power grid for specified wind speed(-s) and MPPT 
@@ -458,13 +478,13 @@ class WindFarmCalculator:
                                                  plt_res=plt_res)
         P_vscg = (3*V_vscg*I_a).real
         
-        I_poc, P_poc_intsct  = self.solve_I_poc(P_vscg=P_vscg)
+        I_poc = self.solve_I_poc_2(P_vscg=P_vscg)
         V_vscs_p, I_t1_p, S_vscs, V_sec = self.calc_system_circuit_t2(I_poc=I_poc)
-        P_poc = 3*33e3/np.sqrt(3)*I_poc
+        P_poc = self.V_grid*I_poc
         
         if plt_res:
             #Plot System-side circuit
-            V_poc = np.array([33e3/np.sqrt(3)]*len(V_vscs_p))
+            V_poc = np.array([self.V_grid]*len(V_vscs_p))
             self.plot_res(V_0, abs(np.vstack([V_vscs_p, V_poc, V_sec]))*4/33, 
                           plt_labels=[r"$V_\text{VSC-S}$", r"$V_\text{POC}$", 
                                       r"$V_\text{sec}$"], 
@@ -494,7 +514,7 @@ class WindFarmCalculator:
                           ax_labels=[r"$V_0\:[\unit{m/s}]$",
                                     r"$P\:[\unit{\MW}]\text{ or }"
                                     + r"S\:[\unit{\MW}]\text{ or }"
-                                    + r"Q\:[\unit{\mega\V\A}]$"], 
+                                    + r"Q\:[\unit{\mega {\V\A\text{r}}}]$"], 
                           ax_ticks=[[],np.arange(0,11,2)], 
                           fname=f"T2_S_vs_V0_MPPT{cont_type}")
         
@@ -577,7 +597,7 @@ class WindFarmCalculator:
                       ax_labels=[r"$I_\text{POC}\:[\unit{A}]$",
                                 r"$P\:[\unit{\MW}]\text{ or }"
                                 + r"S\:[\unit{\MW}]\text{ or }"
-                                + r"Q\:[\unit{\mega\V\A}]$"], 
+                                + r"Q\:[\unit{\mega {\V\A\text{r}}}]$"], 
                       fname=f"T2_S_vs_I_poc")
     
     def plot_res(self, x, y, plt_labels=[], 
@@ -641,32 +661,35 @@ if __name__ == "__main__":
     WFC = WindFarmCalculator()  
     V_0 = np.arange(2,10.5,.5)
     
-    #%% Task 1
-    WFC.plot_AB_t1()
-    eta_a, P_poc_a, P_mech_a = WFC.calc_efficiency(V_0=V_0, cont_type="a", 
-                                                   plt_res=True)
-    eta_b, P_poc_b, P_mech_b = WFC.calc_efficiency(V_0=V_0, cont_type="b", 
-                                                   plt_res=True)
+    calc_dict = dict(T1=False,
+                     T2=True)
     
-    WFC.plot_res(V_0, np.vstack((eta_a, eta_b))*100, 
-                 plt_labels=["Zero Power angle", "Zero beta angle"], 
-                 ax_labels=[r"$V_0\:[\unit{m/s}]$",
-                            r"$\eta\:[\unit{\percent}]$"], 
-                 ax_lims=[[], [-5,105]], 
-                 ax_ticks=[[],np.arange(0,101,10)], 
-                 fname=f"T1_eta_vs_V0")
+    #%% Task 1
+    if calc_dict["T1"]:
+        WFC.plot_AB_t1()
+        eta_a, P_poc_a, P_mech_a = WFC.calc_efficiency(V_0=V_0, cont_type="a", 
+                                                       plt_res=True)
+        eta_b, P_poc_b, P_mech_b = WFC.calc_efficiency(V_0=V_0, cont_type="b", 
+                                                       plt_res=True)
+        
+        WFC.plot_res(V_0, np.vstack((eta_a, eta_b))*100, 
+                     plt_labels=["Zero Power angle", "Zero beta angle"], 
+                     ax_labels=[r"$V_0\:[\unit{m/s}]$",
+                                r"$\eta\:[\unit{\percent}]$"], 
+                     ax_lims=[[], [-5,105]], 
+                     ax_ticks=[[],np.arange(0,101,10)], 
+                     fname=f"T1_eta_vs_V0")
     
     #%% Task 2
-    WFC.plot_AB_t2()
-    V_vscs_p_a, I_t1_p_a, S_vscs_a, Q_vscs_a = WFC.calc_task_2 (V_0=V_0, 
-                                                                cont_type="a", 
-                                                                plt_res = True)
-    V_vscs_p_b, I_t1_p_b, S_vscs_b, Q_vscs_b = WFC.calc_task_2 (V_0=V_0, 
-                                                                cont_type="b", 
-                                                                plt_res = True)
-    
-    WFC.plot_res(V_0, np.vstack((Q_vscs_a, Q_vscs_b)), 
-                 plt_labels=["Zero Power angle", "Zero beta angle"], 
-                 ax_labels=[r"$V_0\:[\unit{m/s}]$",
-                            r"$Q\:[\unit{\mega\V\A}]$"], 
-                 fname=f"T2_Q_vs_V0")
+    if calc_dict["T2"]:
+        WFC.plot_AB_t2()
+        V_vscs_p_a, I_t1_p_a, S_vscs_a, Q_vscs_a = \
+            WFC.calc_task_2 (V_0=V_0, cont_type="a", plt_res = True)
+        V_vscs_p_b, I_t1_p_b, S_vscs_b, Q_vscs_b = \
+            WFC.calc_task_2 (V_0=V_0, cont_type="b", plt_res = True)
+        
+        WFC.plot_res(V_0, np.vstack((Q_vscs_a, Q_vscs_b))*1e-6, 
+                     plt_labels=["Zero Power angle", "Zero beta angle"], 
+                     ax_labels=[r"$V_0\:[\unit{m/s}]$",
+                                r"$Q\:[\unit{\mega {\V\A\text{r}}}]$"], 
+                     fname=f"T2_Q_vs_V0")
