@@ -25,6 +25,9 @@
 %%   \usepackage[T1]{fontenc}
 %%   \usepackage{amsmath}
 %%   \usepackage[detect-all,locale=DE]{siunitx}
+%%   \ifdefined\pdftexversion\else  % non-pdftex case.
+%%     \usepackage{fontspec}
+%%   \fi
 %%   \makeatletter\@ifpackageloaded{underscore}{}{\usepackage[strings]{underscore}}\makeatother
 %%
 \begingroup%

@@ -5,6 +5,8 @@ import pandas as pd
 import cmath
 import os
 from intersect import intersection
+from scipy.optimize import fsolve
+from scipy.optimize import least_squares
 
 #Plotting imports
 import matplotlib as mpl
@@ -227,12 +229,6 @@ class WindFarmCalculator:
                 voltage side) [V]    
         """
         
-        # if not type (V_vscs) == complex:
-        #     if np.isscalar(V_vscs):
-        #         V_vscs = complex(V_vscs, 0)
-        #     else:
-        #         V_vscs = np.array([complex(V, 0) for V in V_vscs])
-        
         I_t1_p = P_vscg/(3*V_vscs_p)
         I_t3_p = (V_vscs_p-I_t1_p*self.Z_t1_p)/self.Z_t3_p
         I_t2 = I_t1_p-I_t3_p
@@ -285,7 +281,7 @@ class WindFarmCalculator:
         
         return V_vscs_p, I_t1_p, S_vscs, V_sec
         
-    def solve_V_vscs_p (self, P_vscg):
+    def solve_V_vscs_p_anal (self, P_vscg):
         """Find the systems-side VSC voltage for which the power grid voltage 
         becomes equal to its nominal value of 33kV  for a specified active 
         power of the generator-side VSC assuming a power factor of 1 
@@ -318,7 +314,64 @@ class WindFarmCalculator:
             V_poc_intsct[i] = V_intersect[1][-1]
             
         return V_vscs_p, V_poc_intsct 
+    
+    def eq_sys_task1 (self, x, P_vscg):
+        V_vscs_p_real, I_t2_real, I_t2_imag, \
+            I_t3_p_real, I_t3_p_imag, I_c2_real, I_c2_imag, \
+            I_poc_real, I_poc_imag, theta_v_poc = x
+        
+        V_vscs_p = complex(V_vscs_p_real, 0)
+        I_t2 = complex(I_t2_real, I_t2_imag)
+        I_t3_p = complex(I_t3_p_real, I_t3_p_imag)
+        I_c2 = complex(I_c2_real, I_c2_imag)
+        I_poc = complex(I_poc_real, I_poc_imag)
+        V_poc = complex(self.V_grid*np.cos(theta_v_poc), 
+                        self.V_grid*np.sin(theta_v_poc))
+        
+        #Current I_t1_p given by real power
+        I_t1_p = P_vscg/(3*V_vscs_p)
+        
+        #KCL
+        KCL_1 = I_t1_p - I_t2 - I_t3_p
+        KCL_2 = I_t2 - I_c2 - I_poc 
+        
+        #KVL
+        KVL_1 = V_vscs_p - I_t1_p*self.Z_t1_p - I_t3_p*self.Z_t3_p
+        KVL_2 = I_t3_p*self.Z_t3_p - I_t2*(self.Z_t2 + self.Z_c1) - I_c2*self.Z_c2
+        KVL_3 = V_poc - I_c2*self.Z_c2
+   
+        return [KCL_1.real, KCL_1.imag, KCL_2.real, KCL_2.imag, \
+                KVL_1.real, KVL_1.imag, KVL_2.real, KVL_2.imag, \
+                KVL_3.real, KVL_3.imag]
+    
+    def solve_V_vscs_p_fsolve (self, P_vscg):
+        """Find the systems-side VSC voltage for which the power grid voltage 
+        becomes equal to its nominal value of 33kV  for a specified active 
+        power of the generator-side VSC assuming a power factor of 1 
+        for the system-side VSC.
+        
+        Parameters:
+            P_vscg (scalar or array-like);
+                Active power of the generator-side VSC [W]
+        
+        Returns:
+            V_vscs (scalar or array-like);
+                Voltage of the system-side VSC [V]
+            P_vscg (scalar or array-like);
+                Active power of the generator-side VSC at which the solution 
+                was found [W]
+        """
+        
+        init_guess = [self.V_grid, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        # bounds = ((self.V_grid, -5e2, -5e2, -5e2, -5e2, -5e2, -5e2, -5e2, -5e2, -np.pi), 
+        #           (40e3, 5e2, 5e2, 5e2, 5e2, 5e2, 5e2, 5e2, 5e2, np.pi))
 
+        roots = fsolve(self.eq_sys_task1, x0=init_guess, args=P_vscg)
+        
+        V_vscs_p = roots[0]
+        
+        return V_vscs_p
+    
     def solve_I_poc (self, P_vscg):
         """Find the systems-side VSC voltage and current for which the power 
         grid voltage becomes equal to its nominal value of 33kV  for a 
@@ -372,7 +425,8 @@ class WindFarmCalculator:
         
         return I_poc
     
-    def calc_efficiency (self, V_0, cont_type="a", plt_res = False):  
+    def calc_efficiency (self, V_0, cont_type="a", solver = "anal",
+                         plt_res = False):  
         """Calculates the efficiency of the electronic system from the 
         generator to the power grid for specified wind speed(-s) and MPPT 
         control scheme
@@ -385,7 +439,13 @@ class WindFarmCalculator:
                 - "a": Zero Power Factor: The phase current is in phase with  
                        the terminal voltage
                 - "b": Zero Beta Angle: The phase current is in phase with 
-                       the induced voltage  
+                       the induced voltage 
+           solver (str):
+               Type of solver to use:
+               - "anal": Semi-analytical solver
+               - "fsolve": scipy fsolve
+           plt_res (bool):
+               Selection whether the results should be plotted
         
         Returns:
             eta (scalar or array-like);
@@ -402,7 +462,12 @@ class WindFarmCalculator:
                                                  plt_res=plt_res)
         P_vscg = (3*V_vscg*I_a).real
         
-        V_vscs_p, V_poc_intersect = self.solve_V_vscs_p(P_vscg=P_vscg)
+        if solver == "anal":
+            V_vscs_p, V_poc_intersect = self.solve_V_vscs_p_anal(P_vscg=P_vscg)
+        elif solver == "fsolve":
+            V_vscs_p = self.solve_V_vscs_p_fsolve(P_vscg=P_vscg)
+        else:
+            raise ValueError("Solver must be 'anal' or 'fsolve'")
         V_poc, I_poc, V_sec = self.calc_system_circuit_t1(P_vscg=P_vscg, 
                                                           V_vscs_p=V_vscs_p)
         
@@ -443,7 +508,7 @@ class WindFarmCalculator:
                          ax_ticks=[[],np.arange(0,101,10)], 
                          fname=f"T1_eta_vs_V0_MPPT_{cont_type}")
 
-        return eta, P_poc, P_mech
+        return eta, P_poc, P_mech, I_poc, V_poc
     
     def calc_task_2 (self, V_0, cont_type="a", plt_res = False):
         """Calculates the reactive power of the system-side circuit for which 
@@ -480,7 +545,7 @@ class WindFarmCalculator:
         
         I_poc = self.solve_I_poc_2(P_vscg=P_vscg)
         V_vscs_p, I_t1_p, S_vscs, V_sec = self.calc_system_circuit_t2(I_poc=I_poc)
-        P_poc = self.V_grid*I_poc
+        P_poc = 3*self.V_grid*I_poc
         
         if plt_res:
             #Plot System-side circuit
@@ -518,7 +583,7 @@ class WindFarmCalculator:
                           ax_ticks=[[],np.arange(0,11,2)], 
                           fname=f"T2_S_vs_V0_MPPT{cont_type}")
         
-        return V_vscs_p, I_t1_p, S_vscs, S_vscs.imag
+        return V_vscs_p, I_t1_p, S_vscs, S_vscs.imag, P_poc, I_poc
         
     def plot_AB_t1 (self, P_vscg=10e6):
         """Plot the relationship between the system-side VSC voltage and the
@@ -598,7 +663,7 @@ class WindFarmCalculator:
                                 r"$P\:[\unit{\MW}]\text{ or }"
                                 + r"S\:[\unit{\MW}]\text{ or }"
                                 + r"Q\:[\unit{\mega {\V\A\text{r}}}]$"], 
-                      fname=f"T2_S_vs_I_poc")
+                      fname="T2_S_vs_I_poc")
     
     def plot_res(self, x, y, plt_labels=[], 
                  ax_labels=["",""], ax_lims=[(),()], 
@@ -662,15 +727,18 @@ if __name__ == "__main__":
     V_0 = np.arange(2,10.5,.5)
     
     calc_dict = dict(T1=False,
-                     T2=True)
+                     T2=False)
     
     #%% Task 1
     if calc_dict["T1"]:
         WFC.plot_AB_t1()
-        eta_a, P_poc_a, P_mech_a = WFC.calc_efficiency(V_0=V_0, cont_type="a", 
-                                                       plt_res=True)
-        eta_b, P_poc_b, P_mech_b = WFC.calc_efficiency(V_0=V_0, cont_type="b", 
-                                                       plt_res=True)
+        eta_a, P_poc_a, P_mech_a, I_poc_t1_a, V_poc_t1_a = WFC.calc_efficiency(V_0=V_0, cont_type="a", 
+                                                       plt_res=False)
+        eta_b, P_poc_b, P_mech_b, I_poc_t1_b, V_poc_t1_b = WFC.calc_efficiency(V_0=V_0, cont_type="b", 
+                                                       plt_res=False)
+        
+        Q_poc_t1_a = (3*V_poc_t1_a*I_poc_t1_a).imag
+        Q_poc_t1_b = (3*V_poc_t1_b*I_poc_t1_b).imag
         
         WFC.plot_res(V_0, np.vstack((eta_a, eta_b))*100, 
                      plt_labels=["Zero Power angle", "Zero beta angle"], 
@@ -678,18 +746,72 @@ if __name__ == "__main__":
                                 r"$\eta\:[\unit{\percent}]$"], 
                      ax_lims=[[], [-5,105]], 
                      ax_ticks=[[],np.arange(0,101,10)], 
-                     fname=f"T1_eta_vs_V0")
+                     fname="T1_eta_vs_V0")
     
     #%% Task 2
     if calc_dict["T2"]:
         WFC.plot_AB_t2()
-        V_vscs_p_a, I_t1_p_a, S_vscs_a, Q_vscs_a = \
-            WFC.calc_task_2 (V_0=V_0, cont_type="a", plt_res = True)
-        V_vscs_p_b, I_t1_p_b, S_vscs_b, Q_vscs_b = \
-            WFC.calc_task_2 (V_0=V_0, cont_type="b", plt_res = True)
+        V_vscs_p_a, I_t1_p_a, S_vscs_a, Q_vscs_t2_a, P_poc_t2_a, I_poc_t2_a = \
+            WFC.calc_task_2 (V_0=V_0, cont_type="a", plt_res = False)
+        V_vscs_p_b, I_t1_p_b, S_vscs_b, Q_vscs_t2_b, P_poc_t2_b, I_poc_t2_b = \
+            WFC.calc_task_2 (V_0=V_0, cont_type="b", plt_res = False)
         
-        WFC.plot_res(V_0, np.vstack((Q_vscs_a, Q_vscs_b))*1e-6, 
+        WFC.plot_res(V_0, np.vstack((Q_vscs_t2_a, Q_vscs_t2_b))*1e-6, 
                      plt_labels=["Zero Power angle", "Zero beta angle"], 
                      ax_labels=[r"$V_0\:[\unit{m/s}]$",
                                 r"$Q\:[\unit{\mega {\V\A\text{r}}}]$"], 
-                     fname=f"T2_Q_vs_V0")
+                     fname="T2_Q_vs_V0")
+        
+    #%% Post
+    if calc_dict["T1"]:
+        I_poc_t1_a = abs(I_poc_t1_a)
+        I_poc_t1_b = abs(I_poc_t1_b)
+    if calc_dict["T2"]:
+        I_poc_t2_b = abs(I_poc_t2_b)
+        I_poc_t2_a = abs(I_poc_t2_a)
+    
+    
+    #%% Testing
+    #Preps
+    V_0 = np.array([8])
+    P_mech = WFC.calc_P_mech (V_0)
+    V_vscg, I_a, delta = WFC.calc_generator(V_0=V_0, cont_type="a")
+    P_vscg = (3*V_vscg*I_a).real
+    
+    #Semi-analytical
+    V_vscs_p_anal, V_poc_intersect = WFC.solve_V_vscs_p(P_vscg=P_vscg)
+    V_poc_anal, I_poc_anal, _ = WFC.calc_system_circuit_t1(P_vscg=P_vscg, 
+                                                      V_vscs_p=V_vscs_p_anal)
+    
+    #Fsolve
+    roots = WFC.fsolve_V_vscs_p (P_vscg.item())
+    V_vscs_p_fsolve = roots[0]
+    I_t2_fsolve = complex(roots[1], roots[2])
+    I_t3_p_fsolve = complex(roots[3], roots[4])
+    I_c2_fsolve = complex(roots[5], roots[6])
+    I_poc_fsolve = complex(roots[7], roots[8])
+    V_poc_fsolve = complex(WFC.V_grid*np.cos(roots[9]), 
+                    WFC.V_grid*np.sin(roots[9]))
+    
+    V_poc2, I_poc2, _ = WFC.calc_system_circuit_t1(P_vscg, V_vscs_p_fsolve)
+    
+    
+    
+    
+    
+    I_t1_p_fsolve = P_vscg/(3*V_vscs_p_fsolve)
+    #KCL
+    KCL_1 = I_t1_p_fsolve - I_t2_fsolve - I_t3_p_fsolve
+    KCL_2 = I_t2_fsolve - I_c2_fsolve - I_poc_fsolve
+    
+    #KVL
+    KVL_1 = V_vscs_p_fsolve - I_t1_p_fsolve*WFC.Z_t1_p - I_t3_p_fsolve*WFC.Z_t3_p
+    KVL_2 = I_t3_p_fsolve*WFC.Z_t3_p - I_t2_fsolve*(WFC.Z_t2 + WFC.Z_c1) + I_c2_fsolve*WFC.Z_c2
+    KVL_3 = V_poc_fsolve - I_c2_fsolve*WFC.Z_c2
+    
+    
+    
+    
+    
+    
+    
