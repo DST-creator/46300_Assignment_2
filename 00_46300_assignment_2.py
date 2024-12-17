@@ -114,11 +114,11 @@ class WindFarmCalculator:
         speed.
         
         Parameters:
-            V_0 (scalar or array-like);
+            V_0 (scalar or array-like):
                 Wind speed [m/s]
         
         Returns:
-            P_mech (scalar or array-like);
+            P_mech (scalar or array-like):
                 The mechanical power for the specified wind speeds [W]
         """
         
@@ -151,7 +151,7 @@ class WindFarmCalculator:
         scheme.
         
         Parameters:
-            V_0 (scalar or array-like);
+            V_0 (scalar or array-like):
                 Wind speed [m/s]
             cont_type (str):
                 MPPT control scheme. Available control schemes are:
@@ -161,11 +161,11 @@ class WindFarmCalculator:
                        the induced voltage   
         
         Returns:
-            V_vscg (scalar or array-like);
+            V_vscg (scalar or array-like):
                 The terminal voltage [V]
-            I_a  (scalar or array-like);
+            I_a  (scalar or array-like):
                 The current in the circuit [A]
-            delta  (scalar or array-like);
+            delta  (scalar or array-like):
                 The phase angle between the terminal voltage and the 
                 induced voltage [deg]
         """
@@ -212,19 +212,19 @@ class WindFarmCalculator:
         of the voltage of the system side VSC.
         
         Parameters:
-            P_vscg (scalar or array-like);
+            P_vscg (scalar or array-like):
                 Active power of the generator-side VSC [W]
-            V_vscs_p (scalar or array-like);
+            V_vscs_p (scalar or array-like):
                 Voltage of the system-side VSC, referred to the high voltage 
                 side[V]
             
             
         Returns:
-            V_poc (scalar or array-like);
+            V_poc (scalar or array-like):
                 The power grid voltage [V]
-            I_poc  (scalar or array-like);
+            I_poc  (scalar or array-like):
                 The power grid current [A]
-            V_sec (scalar or array-like);
+            V_sec (scalar or array-like):
                 Voltage of the secondary coil of the transformer (high 
                 voltage side) [V]    
         """
@@ -246,22 +246,22 @@ class WindFarmCalculator:
         of the voltage of the system side VSC.
         
         Parameters:
-            P_vscg (scalar or array-like);
+            P_vscg (scalar or array-like):
                 Active power of the generator-side VSC [W]
-            I_poc (scalar or array-like);
+            I_poc (scalar or array-like):
                 The power grid current [A]
             
             
         Returns:
-            V_vscs_p (scalar or array-like);
+            V_vscs_p (scalar or array-like):
                 Voltage of the system-side VSC, referred to the high voltage 
                 side [V]
-            I_t1_p (scalar or array-like);
+            I_t1_p (scalar or array-like):
                 Current of the system-side VSC, referred to the high voltage 
                 side [A]
-            S_vscs (scalar or array-like);
+            S_vscs (scalar or array-like):
                 Apparent power of the system-side VSC [VA]  
-            V_sec (scalar or array-like);
+            V_sec (scalar or array-like):
                 Voltage of the secondary coil of the transformer (high 
                 voltage side) [V]    
         """
@@ -288,13 +288,13 @@ class WindFarmCalculator:
         for the system-side VSC.
         
         Parameters:
-            P_vscg (scalar or array-like);
+            P_vscg (scalar or array-like):
                 Active power of the generator-side VSC [W]
         
         Returns:
-            V_vscs (scalar or array-like);
+            V_vscs (scalar or array-like):
                 Voltage of the system-side VSC [V]
-            P_vscg (scalar or array-like);
+            P_vscg (scalar or array-like):
                 Active power of the generator-side VSC at which the solution 
                 was found [W]
         """
@@ -316,6 +316,20 @@ class WindFarmCalculator:
         return V_vscs_p, V_poc_intsct 
     
     def eq_sys_task1 (self, x, P_vscg):
+        """Equation system of the first task of the assignment, formulated so 
+        that it can be used with scipy fsolve
+        
+        Parameters:
+            P_vscg (scalar or array-like):
+                Active power of the generator-side VSC [W]
+        
+        Returns:
+            KCL_1 & KCL_2:
+                Real and imaginary component of the two KCLs of the system
+            KVL_1, KVL_2 and KVL_3:
+                Real and imaginary component of the three KVLs of the system
+        """
+        
         V_vscs_p_real, I_t2_real, I_t2_imag, \
             I_t3_p_real, I_t3_p_imag, I_c2_real, I_c2_imag, \
             I_poc_real, I_poc_imag, theta_v_poc = x
@@ -348,23 +362,21 @@ class WindFarmCalculator:
         """Find the systems-side VSC voltage for which the power grid voltage 
         becomes equal to its nominal value of 33kV  for a specified active 
         power of the generator-side VSC assuming a power factor of 1 
-        for the system-side VSC.
+        for the system-side VSC. The equation system is solved with scipy fsolve
         
         Parameters:
-            P_vscg (scalar or array-like);
+            P_vscg (scalar or array-like):
                 Active power of the generator-side VSC [W]
         
         Returns:
-            V_vscs (scalar or array-like);
+            V_vscs (scalar or array-like):
                 Voltage of the system-side VSC [V]
-            P_vscg (scalar or array-like);
+            P_vscg (scalar or array-like):
                 Active power of the generator-side VSC at which the solution 
                 was found [W]
         """
         
         init_guess = [self.V_grid, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-        # bounds = ((self.V_grid, -5e2, -5e2, -5e2, -5e2, -5e2, -5e2, -5e2, -5e2, -np.pi), 
-        #           (40e3, 5e2, 5e2, 5e2, 5e2, 5e2, 5e2, 5e2, 5e2, np.pi))
 
         roots = fsolve(self.eq_sys_task1, x0=init_guess, args=P_vscg)
         
@@ -379,14 +391,14 @@ class WindFarmCalculator:
         factor of 1 for the grid.
         
         Parameters:
-            P_vscg (scalar or array-like);
+            P_vscg (scalar or array-like):
                 Active power of the generator-side VSC [W]
         
         Returns:
-            V_vscs_p (scalar or array-like);
+            V_vscs_p (scalar or array-like):
                 Voltage of the system-side VSC, referred to the high voltage 
                 side [V]
-            P_poc_intsct (scalar or array-like);
+            P_poc_intsct (scalar or array-like):
                 Active power of the system-side VSC, at which the solution was 
                 found [W]
         """
@@ -432,7 +444,7 @@ class WindFarmCalculator:
         control scheme
         
         Parameters:
-            V_0 (scalar or array-like);
+            V_0 (scalar or array-like):
                 Wind speed [m/s]
             cont_type (str):
                 MPPT control scheme. Available control schemes are:
@@ -448,11 +460,11 @@ class WindFarmCalculator:
                Selection whether the results should be plotted
         
         Returns:
-            eta (scalar or array-like);
+            eta (scalar or array-like):
                 The efficiency of the electronic system [-]
-            P_poc (scalar or array-like);
+            P_poc (scalar or array-like):
                 The active output power of the wind turbine to the grid [W]
-            P_mech (scalar or array-like);
+            P_mech (scalar or array-like):
                 The mechanical power for the specified wind speeds (i.e. the 
                 input power into the system) [W]
         
@@ -516,7 +528,7 @@ class WindFarmCalculator:
         speed(-s) and MPPT control scheme
         
         Parameters:
-            V_0 (scalar or array-like);
+            V_0 (scalar or array-like):
                 Wind speed [m/s]
             cont_type (str):
                 MPPT control scheme. Available control schemes are:
@@ -526,15 +538,15 @@ class WindFarmCalculator:
                        the induced voltage  
         
         Returns:
-            V_vscs_p (scalar or array-like);
+            V_vscs_p (scalar or array-like):
                 Voltage of the system-side VSC, referred to the high voltage 
                 side [V]
-            I_t1_p (scalar or array-like);
+            I_t1_p (scalar or array-like):
                 Current of the system-side VSC, referred to the high voltage 
                 side [A]
-            S_vscs (scalar or array-like);
+            S_vscs (scalar or array-like):
                 Apparent power of the system-side VSC [VA]
-            Q_vscs (scalar or array-like);
+            Q_vscs (scalar or array-like):
                 Reactive power of the system-side VSC [VA]
         """
         
@@ -591,7 +603,7 @@ class WindFarmCalculator:
         VSC.
         
         Parameters:
-            P_vscg (scalar or array-like);
+            P_vscg (scalar or array-like):
                 Active power of the generator-side VSC [W]
         
         Returns:
@@ -641,7 +653,7 @@ class WindFarmCalculator:
         VSC.
         
         Parameters:
-            P_vscg (scalar or array-like);
+            P_vscg (scalar or array-like):
                 Active power of the generator-side VSC [W]
         
         Returns:
@@ -769,49 +781,3 @@ if __name__ == "__main__":
     if calc_dict["T2"]:
         I_poc_t2_b = abs(I_poc_t2_b)
         I_poc_t2_a = abs(I_poc_t2_a)
-    
-    
-    #%% Testing
-    #Preps
-    V_0 = np.array([8])
-    P_mech = WFC.calc_P_mech (V_0)
-    V_vscg, I_a, delta = WFC.calc_generator(V_0=V_0, cont_type="a")
-    P_vscg = (3*V_vscg*I_a).real
-    
-    #Semi-analytical
-    V_vscs_p_anal, V_poc_intersect = WFC.solve_V_vscs_p(P_vscg=P_vscg)
-    V_poc_anal, I_poc_anal, _ = WFC.calc_system_circuit_t1(P_vscg=P_vscg, 
-                                                      V_vscs_p=V_vscs_p_anal)
-    
-    #Fsolve
-    roots = WFC.fsolve_V_vscs_p (P_vscg.item())
-    V_vscs_p_fsolve = roots[0]
-    I_t2_fsolve = complex(roots[1], roots[2])
-    I_t3_p_fsolve = complex(roots[3], roots[4])
-    I_c2_fsolve = complex(roots[5], roots[6])
-    I_poc_fsolve = complex(roots[7], roots[8])
-    V_poc_fsolve = complex(WFC.V_grid*np.cos(roots[9]), 
-                    WFC.V_grid*np.sin(roots[9]))
-    
-    V_poc2, I_poc2, _ = WFC.calc_system_circuit_t1(P_vscg, V_vscs_p_fsolve)
-    
-    
-    
-    
-    
-    I_t1_p_fsolve = P_vscg/(3*V_vscs_p_fsolve)
-    #KCL
-    KCL_1 = I_t1_p_fsolve - I_t2_fsolve - I_t3_p_fsolve
-    KCL_2 = I_t2_fsolve - I_c2_fsolve - I_poc_fsolve
-    
-    #KVL
-    KVL_1 = V_vscs_p_fsolve - I_t1_p_fsolve*WFC.Z_t1_p - I_t3_p_fsolve*WFC.Z_t3_p
-    KVL_2 = I_t3_p_fsolve*WFC.Z_t3_p - I_t2_fsolve*(WFC.Z_t2 + WFC.Z_c1) + I_c2_fsolve*WFC.Z_c2
-    KVL_3 = V_poc_fsolve - I_c2_fsolve*WFC.Z_c2
-    
-    
-    
-    
-    
-    
-    
